@@ -2,7 +2,7 @@ import numpy as np
 
 from geomstats.geometry.spd_matrices import SPDMatrices, SPDBuresWassersteinMetric
 from scipy.linalg import sqrtm
-from tools.compute import bures_wasserstein_sectional_curvature
+from tools.compute import bures_wasserstein_sectional_curvature, bures_wasserstein_ricci_curvature
 
 
 TIMES = np.linspace(0., 1., 20)
@@ -17,7 +17,7 @@ def generate_spd_matrices_on_geodesic(dim, times=TIMES, seed=None):
     return points_spd
 
 
-def generate_spd_matrices_on_orthogonal_geodesics(dim, times_1=TIMES, times_2=TIMES, seed=None):
+def generate_spd_matrices_on_two_orthogonal_geodesics(dim, times_1=TIMES, times_2=TIMES, seed=None):
     space_spd = SPDMatrices(dim)
     space_spd.equip_with_metric(SPDBuresWassersteinMetric)
     metric = space_spd.metric
@@ -33,6 +33,29 @@ def generate_spd_matrices_on_orthogonal_geodesics(dim, times_1=TIMES, times_2=TI
     geodesic_1 = metric.exp(vecs_1, mean)
     geodesic_2 = metric.exp(vecs_2, mean)
     return np.vstack((geodesic_1, geodesic_2)), mean
+
+
+def generate_spd_matrices_on_orthogonal_geodesics(dim, times=None, seed=None):
+    rdim = dim * (dim + 1) // 2
+    if times is None:
+        times = np.tile(TIMES, (rdim, 1))
+    space_spd = SPDMatrices(dim)
+    space_spd.equip_with_metric(SPDBuresWassersteinMetric)
+    metric = space_spd.metric
+    np.random.seed(seed) if seed is not None else np.random.seed(np.random.randint(100))
+    mean = space_spd.random_point()
+    vecs = []
+    geodesics = []
+    for i in range(rdim):
+        vec_i = space_spd.random_tangent_vec(mean)
+        for vec in vecs:
+            vec_i = vec_i - metric.inner_product(vec_i, vec, mean) * vec
+        vec_i /= metric.norm(vec_i, mean)
+        vecs_i = np.stack([t * vec_i for t in times[i]])
+        geod_i = metric.exp(vecs_i, mean)
+        vecs.append(vec_i)
+        geodesics.append(geod_i)
+    return np.vstack(geodesics), mean
 
 
 def generate_spd_matrices_on_intersecting_geodesics(dim, n_times=20, time=0.5, ratio=1., seed=None):
@@ -53,7 +76,12 @@ def generate_spd_matrices_on_intersecting_geodesics(dim, n_times=20, time=0.5, r
     geod_2 = spd_space.metric.geodesic(initial_point=mean, initial_tangent_vec=vec_2)(times_2)
     points_spd = np.vstack([geod_1, geod_2])
 
-    return points_spd, mean, curvature
+    velocity_1 = 2 * time * (n_times - 1) * spd_space.metric.log(geod_1[1:], geod_1[:-1])
+    velocity_2 = 2 * time * (n_times - 1) * spd_space.metric.log(geod_2[1:], geod_2[:-1])
+    ricci_1 = bures_wasserstein_ricci_curvature(velocity_1, geod_1[:-1])
+    ricci_2 = bures_wasserstein_ricci_curvature(velocity_2, geod_2[:-1])
+    ricci = np.hstack((ricci_1, ricci_2))
+    return points_spd, mean, curvature, ricci
 
 
 def generate_initialization(points_spd):

@@ -1,11 +1,12 @@
 import numpy as np
 import scipy
 
-from numpy.linalg import norm
-
 from geomstats.geometry.special_orthogonal import SpecialOrthogonal
 from geomstats.geometry.spd_matrices import SPDMatrices, SPDBuresWassersteinMetric
-from tools.compute import make_rotation_2d, points_from_angles_2d, project, tangent_project
+from numpy.linalg import norm
+from ot.gaussian import bures_wasserstein_barycenter
+from scipy.linalg import sqrtm
+from tools.compute import align, make_rotation_2d, points_from_angles_2d, project, tangent_project
 
 
 def cost_func(points, mean, vec):
@@ -16,6 +17,96 @@ def cost_func(points, mean, vec):
     residuals = points - projections
     sq_norms = np.stack([np.sum(res ** 2) for res in residuals])
     return np.sum(sq_norms)
+
+
+def compute_component(points, mean, vec):
+    scalar_prods = np.stack([np.sum((pt - mean) * vec) for pt in points])
+    projections = np.stack([mean + t * vec for t in scalar_prods])
+    return project(projections)
+
+
+def evaluate_results(components, points_spd, mean_spd):
+    dim = points_spd.shape[-1]
+    space = SPDMatrices(dim)
+    space.equip_with_metric(SPDBuresWassersteinMetric)
+
+    costs = [np.sum(space.metric.dist(points_spd, component) ** 2) for component in components]
+    variances = [np.sum(space.metric.dist(component, mean_spd) ** 2) for component in components]
+    #rdim = dim * (dim + 1) // 2
+    #costs = []
+    #variances = []
+    #for i in range(rdim):
+    #    cost = np.nan if np.any(np.isnan(components[i])) else np.sum(space.metric.dist(points_spd, components[i]) ** 2)
+    #    var = np.nan if np.any(np.isnan(components[i])) else np.sum(space.metric.dist(components[i], mean_spd) ** 2)
+    #    costs.append(cost)
+    #    variances.append(var)
+    return np.array(costs), np.array(variances)
+
+
+def check_boundary_2d(points, mean, vec):
+    sym_mat = vec @ np.linalg.inv(mean)
+    eigval, _ = np.linalg.eigh(sym_mat)
+    if np.prod(eigval) < 0.:
+        t_inf = - 1 / eigval[1]
+        t_sup = - 1 / eigval[0]
+    elif eigval[0] < 0.:
+        t_inf = - np.inf
+        t_sup = - 1 / eigval[0]
+    else:
+        t_inf = - 1 / eigval[1]
+        t_sup = np.inf
+    scalar_prods = np.stack([np.sum((pt - mean) * vec) for pt in points])
+    if np.any(scalar_prods < t_inf) or np.any(scalar_prods > t_sup):
+        return True
+    return False
+
+
+def postprocess_2d(costs, variances, components, boundary_checks):
+    status = 1
+    message = 'success'
+    indices = np.argsort(costs)
+    if np.any(indices != np.arange(3)):
+        status = 2
+        message = 'warning: components were reordered'
+        costs, variances, components = costs[indices], variances[indices], components[indices]
+    if np.any(boundary_checks):
+        status = 0
+        message = 'fail: at least one component line leaves the space of invertible matrices'
+
+    return costs, variances, components, status, message
+
+
+class BuresWassersteinTPCA:
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def fit(points_spd):
+        n_points, dim = points_spd.shape[:2]
+        _, mean_spd = bures_wasserstein_barycenter(np.zeros((n_points, 2)), points_spd)
+        mean = sqrtm(mean_spd)
+        points = align(points_spd, mean)
+
+        logs = (points - mean).reshape((n_points, dim ** 2))
+        test_center = norm(np.sum(logs, axis=0) / n_points)
+        if test_center > 1e-5:
+            print(f'Warning: the norm of the mean of the tangent vectors is {test_center}, not zero.')
+        covariance_of_logs = 1 / n_points * logs.T @ logs
+        _, eig_vecs = np.linalg.eigh(covariance_of_logs)
+
+        vecs_spd = np.zeros((dim ** 2, dim, dim))
+        components = np.zeros((dim ** 2, n_points, dim, dim))
+        for i in range(dim ** 2):
+            vecs_spd[i] = eig_vecs[:, -i-1].reshape((dim, dim))
+            scalar_prods_1 = np.stack([np.sum((pt - mean) * vecs_spd[i]) for pt in points])
+            projections_on_line = np.stack([mean + t * vecs_spd[i] for t in scalar_prods_1])
+            components[i] = project(projections_on_line)
+
+        costs, variances = evaluate_results(components, points_spd, mean_spd)
+
+        res = {'costs': costs, 'variances': variances, 'components': components,
+               'mean_spd': mean_spd, 'vecs_spd': vecs_spd}
+        return res
 
 
 class BuresWassersteinPGA:
@@ -41,7 +132,7 @@ class BuresWassersteinPGA:
         if dim == 2:
             return BuresWassersteinPGA2D(**kwargs)
         else:
-            return BuresWassersteinPGAND(**kwargs)
+            return BuresWassersteinPGAND(dim, **kwargs)
 
 
 class BuresWassersteinPGA2D:
@@ -51,7 +142,7 @@ class BuresWassersteinPGA2D:
         tol_1=1e-3,
         tol_2=1e-3,
         verbose=False,
-        points_init=None,
+        angles_init=None,
         mean_init=None,
         vec_1_init=None,
         vec_2_init=None,
@@ -62,23 +153,49 @@ class BuresWassersteinPGA2D:
         self.tol_1=tol_1
         self.tol_2=tol_2,
         self.verbose=verbose
-        self.points_init = points_init
+        self.angles_init = angles_init
         self.mean_init = mean_init
         self.vec_1_init = vec_1_init
         self.vec_2_init = vec_2_init
 
-    def component_1(self, angles, sq_roots):
+    def component_1(self, sq_roots):
         """ First geodesic component.
         """
-        if self.verbose: print('--------------- component 1')
-        if self.points_init is None:
-            # initialize with square roots
-            self.points_init = points_from_angles_2d(angles, sq_roots)
+        points, angles, mean_1, vec_1 = self.component_1_init(sq_roots)
+        costs = [cost_func(points, mean_1, vec_1)]
+
+        for iteration in range(self.max_iter):
+            angles = self.component_k_step_1(angles, mean_1, vec_1, sq_roots)
+            points = points_from_angles_2d(angles, sq_roots)
+
+            mean_1, vec_1 = self.component_1_step_2(mean_1, vec_1, points)
+
+            check_boundary_2d(points, mean_1, vec_1)
+
+            costs.append(cost_func(points, mean_1, vec_1))
+            if np.abs(costs[-1] - costs[-2]) < self.tol_1 or np.abs((costs[-1] - costs[-2]) / costs[-2]) < self.tol_1:
+                break
+
+        if iteration == self.max_iter - 1:
+            print('Warning: max number of iterations reached for component 1.')
+
+        component_1 = compute_component(points, mean_1, vec_1)
+        boundary_check = check_boundary_2d(points, mean_1, vec_1)
+        return angles, mean_1, vec_1, component_1, boundary_check
+
+    def component_1_init(self, sq_roots):
+        """ Initialization of the first component and corresponding fiber representatives.
+        """
+        n_points = sq_roots.shape[0]
+        if self.angles_init is None:
+            # initialize points with square roots
+            self.angles_init = np.zeros(n_points)
+
+        points_init = points_from_angles_2d(self.angles_init, sq_roots)
 
         if self.mean_init is None:
             # initialize mean to be Euclidean mean
-            n_points = len(angles)
-            self.mean_init = np.sum(self.points_init, axis=0) / n_points
+            self.mean_init = np.sum(points_init, axis=0) / n_points
 
         if self.vec_1_init is None:
             # randomly initialize horizontal vec at mean
@@ -86,55 +203,25 @@ class BuresWassersteinPGA2D:
             self.vec_1_init = (vec_aux + vec_aux.T) @ self.mean_init
             self.vec_1_init /= norm(self.vec_1_init)
 
-        points = self.points_init.copy()
-        mean = self.mean_init.copy()
-        vec = self.vec_1_init.copy()
-
-        costs = [cost_func(points, mean, vec)]
-        if self.verbose: print(f'initial cost is {costs[-1]}')
-
-        for iteration in range(self.max_iter):
-            if self.verbose: print('-- iteration ', iteration)
-            # Compute new points in the fibers: align with the horizontal line
-            angles = self.component_k_step_1(angles, sq_roots, mean, vec)
-            points = points_from_angles_2d(angles, sq_roots)
-            if self.verbose: print(f'end of step 1, cost is {cost_func(points, mean, vec)}')
-
-            # Compute new horizontal line that maximizes the variance of the points' projections
-            mean, vec = self.component_1_step_2(points, mean, vec)
-            costs.append(cost_func(points, mean, vec))
-            if self.verbose: print(f'end of step 2, cost is {costs[-1]}')
-
-            if np.abs(costs[-1] - costs[-2]) < self.tol_1 or np.abs((costs[-1] - costs[-2]) / costs[-2]) < self.tol_1:
-                if self.verbose: print(f'Component 1: convergence reached in {iteration + 1} iterations.')
-                break
-
-        if iteration == self.max_iter - 1:
-            print('Warning: max number of iterations reached for component 1.')
-
-        scalar_prods = np.stack([np.sum((pt - mean) * vec) for pt in points])
-        projections = np.stack([mean + t * vec for t in scalar_prods])
-        component_1 = project(projections)
-
-        return angles, mean, vec, component_1, costs
+        return points_init, self.angles_init, self.mean_init, self.vec_1_init
 
     @staticmethod
-    def component_k_step_1(angles, sq_roots, mean, vec):
+    def component_k_step_1(angles, mean_1, vec_1, sq_roots):
         """ Step 1 of component k: find optimal fiber representatives.
 
         The optimal representatives are parametrized as rotations(angles) @ sq_roots.
         The optimal angles are found by minimizing the cost function with the default
         BFGS method of scipy minimize.
         """
-        def func2min(x, sq_roots, mean, vec):
+        def func2min(x, mean, vec, sq_roots):
             points = points_from_angles_2d(x, sq_roots)
             return cost_func(points, mean, vec)
 
-        h = scipy.optimize.minimize(func2min, x0=angles, args=(sq_roots, mean, vec))
+        h = scipy.optimize.minimize(func2min, x0=angles, args=(mean_1, vec_1, sq_roots))
         return h['x']
 
     @staticmethod
-    def component_1_step_2(points, mean, vec):
+    def component_1_step_2(mean_1, vec_1, points):
         """ Step 2 of component 1: find optimal horizontal line.
 
         The horizontal line is parametrized as mean_1 + t * vec_1, where vec_1 is a unit
@@ -153,58 +240,60 @@ class BuresWassersteinPGA2D:
         {'type': 'eq', 'fun': lambda x: x[0] * x[5] - x[1] * x[4] + x[2] * x[7] - x[3] * x[6]}
     ]
 
-        x0 = np.hstack([vec.reshape(4), mean.reshape(4)])
+        x0 = np.hstack([vec_1.reshape(4), mean_1.reshape(4)])
         h = scipy.optimize.minimize(func2min, x0=x0, args=(points), constraints=cons)
         x_sol = h['x']
-        new_vec = x_sol[:4].reshape((2, 2))
-        new_mean = x_sol[4:].reshape((2, 2))
-        return new_mean, new_vec
+        new_vec_1 = x_sol[:4].reshape((2, 2))
+        new_mean_1 = x_sol[4:].reshape((2, 2))
+        return new_mean_1, new_vec_1
 
     def component_2(self, angles, mean_1, vec_1, sq_roots):
         """ Second geodesic component.
         """
-        if self.verbose: print('--------------- component 2')
-        points = points_from_angles_2d(angles, sq_roots)
-
-        # Initialize the mean with value found in the first step
-        angle = 0.
-        time = 0.
-        mean_2 = (mean_1 + time * vec_1) @ make_rotation_2d(angle)
-
-        # Initialize unit vector
-        vec_2 = make_rotation_2d(np.pi / 2) @ vec_1
-
+        points, mean_2, vec_2, angle_1, time = self.component_2_init(angles, mean_1, vec_1, sq_roots)
         costs = [cost_func(points, mean_2, vec_2)]
-        if self.verbose: print(f'initial cost is {costs[-1]}')
 
         for iteration in range(self.max_iter):
-            if self.verbose: print('-- iteration ', iteration)
-            # Compute new points in the fibers: align with the line
-            angles = self.component_k_step_1(angles, sq_roots, mean_2, vec_2)
+            angles = self.component_k_step_1(angles, mean_2, vec_2, sq_roots)
             points = points_from_angles_2d(angles, sq_roots)
-            if self.verbose: print(f'end of step 1, cost is {cost_func(points, mean_2, vec_2)}')
 
-            # Compute new horizontal line that maximizes the variance of the points' projections
-            vec_2, angle, time = self.component_2_step_2(points, mean_1, vec_1, vec_2, angle, time)
-            mean_2 = (mean_1 + time * vec_1) @ make_rotation_2d(angle)
+            vec_2, angle_1, time = self.component_2_step_2(vec_2, angle_1, time, points, mean_1, vec_1)
+            mean_2 = (mean_1 + time * vec_1) @ make_rotation_2d(angle_1)
+
+            check_boundary_2d(points, mean_2, vec_2)
+
             costs.append(cost_func(points, mean_2, vec_2))
-            if self.verbose: print(f'end of step 2, cost is {costs[-1]}')
-
             if np.abs(costs[-1] - costs[-2]) < self.tol_2 or np.abs((costs[-1] - costs[-2]) / costs[-2]) < self.tol_2:
-                if self.verbose: print(f'Component 2: convergence reached in {iteration + 1} iterations.')
                 break
 
         if iteration == self.max_iter - 1:
             print('Warning: max number of iterations reached for component 2.')
 
-        scalar_prods = np.stack([np.sum((pt - mean_2) * vec_2) for pt in points])
-        projections = np.stack([mean_2 + t * vec_2 for t in scalar_prods])
-        component_2 = np.stack([proj @ proj.T for proj in projections])
-
-        return mean_2, vec_2, angle, component_2, costs
+        component_2 = compute_component(points, mean_2, vec_2)
+        boundary_check = check_boundary_2d(points, mean_2, vec_2)
+        return angles, mean_2, vec_2, angle_1, component_2, boundary_check
 
     @staticmethod
-    def component_2_step_2(points, mean, vec, vec_2, angle, time):
+    def component_2_init(angles, mean_1, vec_1, sq_roots):
+        """ Initialization of the second component and corresponding fiber representatives.
+
+        Choose the fiber representatives and mean found at the end of component 1, and
+        initialize a random unit horizontal vector at that mean that is orthogonal to vec_1.
+        """
+        angle_1 = 0.
+        time = 0.
+        points = points_from_angles_2d(angles, sq_roots)
+        rotation_1 = make_rotation_2d(angle_1)
+        mean_2 = (mean_1 + time * vec_1) @ rotation_1
+        vec_aux = np.random.rand(2, 2)
+        vec_2 = (vec_aux + vec_aux.T) @ mean_2
+        vec_1_mean_2 = vec_1 @ rotation_1
+        vec_2 = vec_2 - np.sum(vec_2 * vec_1_mean_2) * vec_1_mean_2
+        vec_2 /= norm(vec_2)
+        return points, mean_2, vec_2, angle_1, time
+
+    @staticmethod
+    def component_2_step_2(vec_2, angle_1, time, points, mean_1, vec_1):
         """ Step 2 of component 2: find optimal horizontal line.
 
         The horizontal lift of the second geodesic component should intersect a lift of the
@@ -215,69 +304,181 @@ class BuresWassersteinPGA2D:
         and vec_2 under these 3 constraints, using the default SLQSP (Sequential Least Squares
         Programming) method of scipy minimize.
         """
-        def func2min(x, points, mean):
+        def func2min(x, points, mean, vec):
             vec_2 = x[:4].reshape((2, 2))
-            angle = x[4]
+            angle_1 = x[4]
             time = x[5]
-            rotation = make_rotation_2d(np.squeeze(angle))
+            rotation = make_rotation_2d(np.squeeze(angle_1))
             mean_2 = (mean + time * vec) @ rotation
             return cost_func(points, mean_2, vec_2)
 
-        a = mean.reshape(4)
-        v = vec.reshape(4)
-        cons = (
-            {'type': 'eq', 'fun': lambda x: np.sum(x[:4] ** 2) - 1},
-            {'type': 'eq', 'fun': lambda x: (
-                    (v[0] * np.cos(x[-2]) + v[1] * np.sin(x[-2])) * x[0] +
-                    (v[1] * np.cos(x[-2]) - v[0] * np.sin(x[-2])) * x[1] +
-                    (v[2] * np.cos(x[-2]) + v[3] * np.sin(x[-2])) * x[2] +
-                    (v[3] * np.cos(x[-2]) - v[2] * np.sin(x[-2])) * x[3]
-            )},
-            {'type': 'eq', 'fun': lambda x: (
+        def horizontality_constraint(x):
+            a = mean_1.reshape(4)
+            v = vec_1.reshape(4)
+            return (
                     x[0] * (- (a[0] + x[-1] * v[0]) * np.sin(x[-2]) + (a[1] + x[-1] * v[1]) * np.cos(x[-2])) +
                     x[2] * (- (a[2] + x[-1] * v[2]) * np.sin(x[-2]) + (a[3] + x[-1] * v[3]) * np.cos(x[-2])) -
                     x[1] * ((a[0] + x[-1] * v[0]) * np.cos(x[-2]) + (a[1] + x[-1] * v[1]) * np.sin(x[-2])) -
                     x[3] * ((a[2] + x[-1] * v[2]) * np.cos(x[-2]) + (a[3] + x[-1] * v[3]) * np.sin(x[-2]))
-            )}
-        )
+            )
 
-        x0 = np.hstack([vec_2.reshape(4), angle, time])
-        h = scipy.optimize.minimize(func2min, x0=x0, args=(points, mean), constraints=cons)
+        def orthogonality_constraint(x):
+            rotation_1 = make_rotation_2d(x[-2])
+            vec_1_rotated = (vec_1 @ rotation_1).reshape(4)
+            return np.sum(x[:4] * vec_1_rotated)
+
+        cons = [
+            {'type': 'eq', 'fun': lambda x: np.sum(x[:4] ** 2) - 1},
+            {'type': 'eq', 'fun': orthogonality_constraint},
+            {'type': 'eq', 'fun': horizontality_constraint},
+        ]
+        # a = mean_1.reshape(4)
+        # v = vec_1.reshape(4)
+        # cons = (
+        #     {'type': 'eq', 'fun': lambda x: np.sum(x[:4] ** 2) - 1},
+        #     {'type': 'eq', 'fun': lambda x: (
+        #             (v[0] * np.cos(x[-2]) + v[1] * np.sin(x[-2])) * x[0] +
+        #             (v[1] * np.cos(x[-2]) - v[0] * np.sin(x[-2])) * x[1] +
+        #             (v[2] * np.cos(x[-2]) + v[3] * np.sin(x[-2])) * x[2] +
+        #             (v[3] * np.cos(x[-2]) - v[2] * np.sin(x[-2])) * x[3]
+        #     )},
+        #     {'type': 'eq', 'fun': lambda x: (
+        #             x[0] * (- (a[0] + x[-1] * v[0]) * np.sin(x[-2]) + (a[1] + x[-1] * v[1]) * np.cos(x[-2])) +
+        #             x[2] * (- (a[2] + x[-1] * v[2]) * np.sin(x[-2]) + (a[3] + x[-1] * v[3]) * np.cos(x[-2])) -
+        #             x[1] * ((a[0] + x[-1] * v[0]) * np.cos(x[-2]) + (a[1] + x[-1] * v[1]) * np.sin(x[-2])) -
+        #             x[3] * ((a[2] + x[-1] * v[2]) * np.cos(x[-2]) + (a[3] + x[-1] * v[3]) * np.sin(x[-2]))
+        #     )}
+        # )
+
+        x0 = np.hstack([vec_2.reshape(4), angle_1, time])
+        h = scipy.optimize.minimize(func2min, x0=x0, args=(points, mean_1, vec_1), constraints=cons)
         x_sol = h['x']
         new_vec_2 = x_sol[:4].reshape((2, 2))
-        new_angle = np.squeeze(x_sol[-2])
-        new_rotation = make_rotation_2d(new_angle)
+        new_angle_1 = np.squeeze(x_sol[-2])
         new_time = np.squeeze(x_sol[-1])
-        return new_vec_2, new_angle, new_time
+        return new_vec_2, new_angle_1, new_time
+
+    def component_3(self, angles, mean_2, vec_1, vec_2, angle_1, sq_roots):
+        """ Third geodesic component.
+        """
+        points, mean_3, vec_3, angle_2 = self.component_3_init(angles, mean_2, vec_1, vec_2, angle_1, sq_roots)
+        costs = [cost_func(points, mean_3, vec_3)]
+
+        for iteration in range(self.max_iter):
+            angles = self.component_k_step_1(angles, mean_3, vec_3, sq_roots)
+            points = points_from_angles_2d(angles, sq_roots)
+
+            vec_3, angle_2 = self.component_3_step_2(vec_3, angle_2, points, mean_2, vec_1, vec_2, angle_1)
+            mean_3 = mean_2 @ make_rotation_2d(angle_2)
+
+            check_boundary_2d(points, mean_3, vec_3)
+
+            costs.append(cost_func(points, mean_3, vec_3))
+            if np.abs(costs[-1] - costs[-2]) < self.tol_2 or np.abs((costs[-1] - costs[-2]) / costs[-2]) < self.tol_2:
+                break
+
+        if iteration == self.max_iter - 1:
+            print('Warning: max number of iterations reached for component 3.')
+
+        component_3 = compute_component(points, mean_3, vec_3)
+        boundary_check = check_boundary_2d(points, mean_3, vec_3)
+        return mean_3, vec_3, angle_2, component_3, boundary_check
+
+    @staticmethod
+    def component_3_init(angles, mean_2, vec_1, vec_2, angle_1, sq_roots):
+        """ Initialization of the third component and corresponding fiber representatives.
+
+        Choose the fiber representatives and mean found for component 2, and initialize a
+        random unit horizontal vector at that mean that is orthogonal to vec_1 and vec_2.
+        """
+        angle_2 = 0.
+        points = points_from_angles_2d(angles, sq_roots)
+        rotation_1 = make_rotation_2d(angle_1)
+        rotation_2 = make_rotation_2d(angle_2)
+        mean_3 = mean_2 @ rotation_2
+        vec_aux = np.random.rand(2, 2)
+        vec_3 = (vec_aux + vec_aux.T) @ mean_3
+        vec_1_mean_3 = vec_1 @ rotation_1 @ rotation_2
+        vec_2_mean_3 = vec_2 @ rotation_2
+        vec_3 = vec_3 - np.sum(vec_3 * vec_1_mean_3) * vec_1_mean_3 - np.sum(vec_3 * vec_2_mean_3) * vec_2_mean_3
+        vec_3 /= norm(vec_3)
+        return points, mean_3, vec_3, angle_2
+
+    @staticmethod
+    def component_3_step_2(vec_3, angle_2, points, mean_2, vec_1, vec_2, angle_1):
+        """ Step 2 of component 3: find optimal horizontal line.
+
+        The third geodesic component is parametrized by t -> mean_3 + t * vec_3, where
+        mean_3 = mean_2 @ rotation(angle_2), and vec_3 is a unit horizontal vector at mean_3
+        orthogonal to vec_1 @ rotation(angle_1) @ rotation(angle_2) and to vec_2 @ @ rotation(angle_2).
+        It is found by minimizing the cost function over angle_2 and vec_3 under these 4 constraints,
+        using the default SLQSP (Sequential Least Squares Programming) method of scipy minimize.
+        """
+        def func2min(x, points, mean):
+            vec_3 = x[:4].reshape((2, 2))
+            angle_2 = x[4]
+            rotation = make_rotation_2d(np.squeeze(angle_2))
+            mean_3 = mean @ rotation
+            return cost_func(points, mean_3, vec_3)
+
+        def horizontality_constraint(x):
+            a = mean_2.reshape(4)
+            return (
+                    x[0] * (- a[0] * np.sin(x[-2]) + a[1] * np.cos(x[-2])) +
+                    x[2] * (- a[2] * np.sin(x[-2]) + a[3] * np.cos(x[-2])) -
+                    x[1] * (a[0] * np.cos(x[-2]) + a[1] * np.sin(x[-2])) -
+                    x[3] * (a[2] * np.cos(x[-2]) + a[3] * np.sin(x[-2]))
+            )
+
+        def orthogonality_constraints(x):
+            rotation_1 = make_rotation_2d(angle_1)
+            rotation_2 = make_rotation_2d(x[4])
+            vec_1_rotated = (vec_1 @ rotation_1 @ rotation_2).reshape(4)
+            vec_2_rotated = (vec_2 @ rotation_2).reshape(4)
+            return np.stack((
+                np.sum(x[:4] * vec_1_rotated),
+                np.sum(x[:4] * vec_2_rotated)
+            ))
+
+        cons = [
+            {'type': 'eq', 'fun': lambda x: np.sum(x[:4] ** 2) - 1},
+            {'type': 'eq', 'fun': orthogonality_constraints},
+            {'type': 'eq', 'fun': horizontality_constraint},
+        ]
+
+        x0 = np.hstack([vec_3.reshape(4), angle_2])
+        h = scipy.optimize.minimize(func2min, x0=x0, args=(points, mean_2), constraints=cons)
+        x_sol = h['x']
+        new_vec_3 = x_sol[:4].reshape((2, 2))
+        new_angle_2 = np.squeeze(x_sol[-2])
+        return new_vec_3, new_angle_2
 
     def fit(self, points_spd):
-        n_points = points_spd.shape[0]
-        sq_roots = np.stack([scipy.linalg.sqrtm(pt_spd) for pt_spd in points_spd])
-        angles = np.zeros(n_points)
+        sq_roots = np.stack([sqrtm(pt_spd) for pt_spd in points_spd])
 
-        angles, mean_1, vec_1, component_1, costs_1 = self.component_1(angles, sq_roots)
-
-        mean_2, vec_2, angle, component_2, costs_2 = self.component_2(angles, mean_1, vec_1, sq_roots)
+        angles, mean_1, vec_1, component_1, bcheck_1 = self.component_1(sq_roots)
+        angles, mean_2, vec_2, angle_1, component_2, bcheck_2 = self.component_2(angles, mean_1, vec_1, sq_roots)
+        mean_3, vec_3, angle_2, component_3, bcheck_3 = self.component_3(angles, mean_2, vec_1, vec_2, angle_1, sq_roots)
 
         mean_spd = project(mean_2)
+        vecs_spd = np.stack([
+            tangent_project(vec_1 @ make_rotation_2d(angle_1), mean_2),
+            tangent_project(vec_2, mean_2),
+            tangent_project(vec_3, mean_3)
+        ])
+        components = np.stack((component_1, component_2, component_3))
+        boundary_checks = np.array([bcheck_1, bcheck_2, bcheck_3])
+        costs, variances = evaluate_results(components, points_spd, mean_spd)
+        costs, variances, components, status, message = postprocess_2d(costs, variances, components, boundary_checks)
 
-        spd_space = SPDMatrices(2)
-        spd_space.equip_with_metric(SPDBuresWassersteinMetric)
-        cost_1 = np.sum(spd_space.metric.dist(points_spd, component_1)**2)
-        cost_2 = np.sum(spd_space.metric.dist(points_spd, component_2)**2)
-        vec_1_spd = tangent_project(vec_1 @ make_rotation_2d(angle), mean_2)
-        vec_2_spd = tangent_project(vec_2, mean_2)
-
-        return {
-            'mean_spd': mean_spd, 'vec_1_spd': vec_1_spd, 'vec_2_spd': vec_2_spd, 'vec_1': vec_1, 'vec_2': vec_2,
-            'costs_1': costs_1, 'costs_2': costs_2, 'cost_1': cost_1, 'cost_2': cost_2,
-            'component_1': component_1, 'component_2': component_2,
-        }
+        return {'costs': costs, 'variances': variances, 'components': components,
+                'mean_spd': mean_spd, 'vecs_spd': vecs_spd, 'status': status, 'message': message}
 
 
 class BuresWassersteinPGAND:
     def __init__(
         self,
+        dim,
         max_iter=100,
         max_iter_gd=1000,
         tol=1e-3,
@@ -309,6 +510,8 @@ class BuresWassersteinPGAND:
         self.mean_init=mean_init
         self.vec_1_init=vec_1_init
         self.vec_2_init=vec_2_init
+        self.space = SPDMatrices(dim)
+        self.space.equip_with_metric(SPDBuresWassersteinMetric)
 
     def component_1(self, rotations, sq_roots):
         """ First geodesic component.
@@ -524,9 +727,10 @@ class BuresWassersteinPGAND:
         costs = [cost_func(points, mean_2, vec_2)]
         for iteration in range(self.max_iter):
             if self.super_verbose: print(f'iteration {iteration} of step 2')
-            rotation_2 = self.component_2_step_2_1(rotation_2, time_2, vec_2, points, mean_1, vec_1)
+            new_rotation_2 = self.component_2_step_2_1(rotation_2, time_2, vec_2, points, mean_1, vec_1)
 
-            vec_2, time_2 = self.component_2_step_2_2(rotation_2, rotation_2, time_2, vec_2, points, mean_1, vec_1)
+            vec_2, time_2 = self.component_2_step_2_2(new_rotation_2, rotation_2, time_2, vec_2, points, mean_1, vec_1)
+            rotation_2 = new_rotation_2.copy()
             mean_2 = (mean_1 + time_2 * vec_1) @ rotation_2
             costs.append(cost_func(points, mean_2, vec_2))
             if self.super_verbose: print('step 2-2, cost is ', costs[-1])
@@ -612,12 +816,51 @@ class BuresWassersteinPGAND:
         new_time_2 = x_sol[-1]
         return new_vec_2, new_time_2
 
+    # def component_3_step_2(self, rotation_3, vec_3, points, mean_2, vec_1, vec_2):
+    #     """ Step 2 of component 2: find optimal horizontal line.
+    #
+    #     The third geodesic component is parametrized by t -> mean_3 + t * vec_3, where
+    #     mean_3 = mean_2 @ rotation_3, and vec_3 is a unit horizontal vector at mean_3
+    #     and is orthogonal to vec_1 @ rotation_3 and to vec_2 @ rotation_3. It is found
+    #     by an alternate minimization of the cost function over rotation_3 (step 3-1) and
+    #     vec_3 (step 3-2).
+    #     """
+    #     mean_3 = mean_2 @ rotation_3
+    #     costs = [cost_func(points, mean_3, vec_3)]
+    #     for iteration in range(self.max_iter):
+    #         if self.super_verbose: print(f'iteration {iteration} of step 2')
+    #         rotation_3 = self.component_3_step_2_1(rotation_3, vec_3, points, mean_2, vec_1, vec_2)
+    #
+    #         vec_3 = self.component_2_step_2_2(rotation_2, rotation_2, time_2, vec_2, points, mean_1, vec_1)
+    #         mean_2 = (mean_1 + time_2 * vec_1) @ rotation_2
+    #         costs.append(cost_func(points, mean_2, vec_2))
+    #         if self.super_verbose: print('step 2-2, cost is ', costs[-1])
+    #
+    #         if np.abs((costs[-1] - costs[-2]) / costs[-2]) < self.tol or np.abs(costs[-1] - costs[-2]) < self.tol:
+    #             if self.verbose: print(f'Step 2: convergence reached in {iteration + 1} iterations.')
+    #             break
+    #
+    #     if iteration == self.max_iter - 1:
+    #         print('Step 2: Warning! max number of iterations reached for step 2 of component 2.')
+    #     return rotation_2, time_2, vec_2
+
+    # def evaluate_results(self, components, points_spd, mean_spd):
+    #     costs = [
+    #         np.sum(self.space.metric.dist(points_spd, components[0]) ** 2),
+    #         np.sum(self.space.metric.dist(points_spd, components[1]) ** 2),
+    #     ]
+    #     variances = [
+    #         np.sum(self.space.metric.dist(components[0], mean_spd) ** 2),
+    #         np.sum(self.space.metric.dist(components[1], mean_spd) ** 2),
+    #     ]
+    #     return costs, variances
+
     def fit(self, points_spd):
         """ Perform Bures-Wasserstein Principal Geodesic Analysis on SPD matrices.
         """
         n_points = points_spd.shape[0]
         dim = points_spd.shape[1]
-        sq_roots = np.stack([scipy.linalg.sqrtm(pt_spd) for pt_spd in points_spd])
+        sq_roots = np.stack([sqrtm(pt_spd) for pt_spd in points_spd])
         rotations = np.tile(np.eye(dim), (n_points, 1, 1))
 
         rotations, mean_1, vec_1, component_1, costs_1 = self.component_1(rotations, sq_roots)
@@ -633,8 +876,15 @@ class BuresWassersteinPGAND:
         vec_1_spd = tangent_project(vec_1 @ rotation_2, mean_2)
         vec_2_spd = tangent_project(vec_2, mean_2)
 
+        costs = np.array([cost_1, cost_2])
+        vecs_spd = np.stack([vec_1_spd, vec_2_spd])
+        components = np.stack([component_1, component_2])
+
+        var_1 = np.sum(spd_space.metric.squared_dist(mean_spd, component_1)) / n_points
+        var_2 = np.sum(spd_space.metric.squared_dist(mean_spd, component_2)) / n_points
+
         return {
-            'mean_spd': mean_spd, 'vec_1_spd': vec_1_spd, 'vec_2_spd': vec_2_spd, 'vec_1': vec_1, 'vec_2': vec_2,
-            'costs_1': costs_1, 'costs_2': costs_2, 'cost_1': cost_1, 'cost_2': cost_2,
-            'component_1': component_1, 'component_2': component_2,
+            'mean_spd': mean_spd, 'vecs_spd': vecs_spd,
+            'costs': costs, 'components': components,
+            'var_1': var_1, 'var_2': var_2,
         }

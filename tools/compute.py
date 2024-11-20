@@ -75,3 +75,26 @@ def bures_wasserstein_sectional_curvature(vec_1, vec_2, base_point):
         spd_space.metric.inner_product(vec_1, vec_2, base_point) ** 2
     )
     return num / den
+
+
+def bures_wasserstein_ricci_curvature_unit(vec, base_point):
+    dim = base_point.shape[0]
+    spd_space = SPDMatrices(dim)
+    spd_space.equip_with_metric(SPDBuresWassersteinMetric)
+    ricci = 0.
+    for i in range(dim):
+        for j in range(i, dim):
+            basis_vec_ij = np.zeros((dim, dim))
+            basis_vec_ij[i, j] = 1.
+            basis_vec_ij[j, i] = 1.
+            ricci += bures_wasserstein_sectional_curvature(basis_vec_ij, vec, base_point)
+    return ricci
+
+
+def bures_wasserstein_ricci_curvature(vec, base_point):
+    if vec.ndim == 3:
+        ricci = []
+        for (vc, bp) in zip(vec, base_point):
+            ricci.append(bures_wasserstein_ricci_curvature_unit(vc, bp))
+        return np.array(ricci)
+    return bures_wasserstein_ricci_curvature_unit(vec, base_point)

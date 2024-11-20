@@ -1,5 +1,4 @@
 from tools.compute import *
-from tools.generate import generate_spd_matrices_on_intersecting_geodesics
 from geomstats.geometry.special_orthogonal import SpecialOrthogonal
 
 

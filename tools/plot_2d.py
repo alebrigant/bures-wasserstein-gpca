@@ -10,32 +10,42 @@ def plot_spd_matrix(mat, **kwargs):
     plt.plot(res[0], res[1], **kwargs)
 
 
-def plot_results(points_spd, res, title=''):
+def plot_results(points_spd, res, title='', fontsize=8):
     n_points = points_spd.shape[0]
     map = matplotlib.colormaps['cool'].resampled(n_points)
+    font = {'size': fontsize}
+    matplotlib.rc('font', **font)
 
-    fig = plt.figure(figsize=(12, 4))
-    fig.add_subplot(131)
+    fig = plt.figure(figsize=(12, 3))
+    fig.add_subplot(141)
     for i in range(n_points):
         plot_spd_matrix(points_spd[i], color=map(i))
     plt.axis('equal')
     plt.title('initial points')
 
-    fig.add_subplot(132)
+    fig.add_subplot(142)
     for i in range(int(n_points)):
         plot_spd_matrix(points_spd[i], color=map(i))
-    for mat in res['component_1']:
+    for mat in res['components'][0]:
         plot_spd_matrix(mat, color='k', linestyle='dotted')
     plt.axis('equal')
     plt.title('projections on 1st component')
 
-    fig.add_subplot(133)
+    fig.add_subplot(143)
     for i in range(int(n_points)):
         plot_spd_matrix(points_spd[i], color=map(i))
-    for mat in res['component_2']:
+    for mat in res['components'][1]:
         plot_spd_matrix(mat, color='k', linestyle='dotted')
     plt.axis('equal')
     plt.title('projections on 2nd component')
+
+    fig.add_subplot(144)
+    for i in range(int(n_points)):
+        plot_spd_matrix(points_spd[i], color=map(i))
+    for mat in res['components'][2]:
+        plot_spd_matrix(mat, color='k', linestyle='dotted')
+    plt.axis('equal')
+    plt.title('projections on 3rd component')
     fig.suptitle(title)
     plt.show()
 
