@@ -38,13 +38,6 @@ def cost_func_unit(point, mean, vec):
 def cost_func(points, mean, vec):
     # Sum of squared norms of the residuals of the projections of points
     # on the line going through mean, directed by vec.
-    #times_clipped = clip_times(points, mean, vec)[0]
-    #if points.ndim < 3:
-    #    times_clipped = [times_clipped]
-    #projections_on_line = np.stack([mean + t * vec for t in times_clipped])
-    #residuals = points - projections_on_line
-    #sq_norms = np.squeeze(np.apply_over_axes(np.sum, residuals ** 2, [-2, -1]))
-    ## sq_norms = np.stack([np.sum(res ** 2) for res in residuals])
     sq_norms = [cost_func_unit(point, mean, vec) for point in points]
     return np.sum(sq_norms)
 
@@ -73,49 +66,6 @@ class BuresWassersteinTPCA:
         self.costs = None
         self.variances = None
         self.times = None
-
-    # def fit(self, points_spd):
-    #     n_points, dim = points_spd.shape[:2]
-    #     _, self.mean_spd = bures_wasserstein_barycenter(np.zeros((n_points, 2)), points_spd)
-    #
-    #     rdim = dim * (dim + 1) // 2
-    #     metric_mat = np.zeros((rdim, rdim))
-    #     basis_vectors = np.stack([from_vec_to_sym(np.eye(rdim)[:, i], dim) for i in range(rdim)])
-    #     for i in range(rdim):
-    #         for j in range(rdim):
-    #             metric_mat[i, j] = np.trace(basis_vectors[i] @ self.mean_spd @ basis_vectors[j])
-    #
-    #     sym_mats = monge_map(self.mean_spd, points_spd)
-    #     logs = np.stack([from_sym_to_vec(sym_mat - np.eye(dim), dim) for sym_mat in sym_mats])
-    #     test_center = norm(np.sum(logs, axis=0) / n_points)
-    #     if test_center > 1e-5:
-    #         print(f'Warning: the norm of the mean of the tangent vectors is {test_center}, not zero.')
-    #     covariance_of_logs = 1 / n_points * logs.T @ logs @ metric_mat # !!!!!!! NOT SYMMETRIC !!!!!!!
-    #     print(covariance_of_logs)
-    #     indices = np.argsort(np.linalg.eig(covariance_of_logs)[0])[::-1]
-    #     eig_vecs = np.linalg.eig(covariance_of_logs)[1].T[indices]
-    #     eig_vecs = gram_schmidt(eig_vecs, metric_mat)
-    #     assert np.all(np.abs(eig_vecs @ metric_mat @ eig_vecs.T - np.eye(rdim)) < 1e-5)
-    #
-    #     mean = sqrtm(self.mean_spd)
-    #     points = sym_mats @ mean
-    #     assert np.all(np.abs(points - align(points_spd, mean)) < 1e-5)
-    #
-    #     #components_coords = logs @ metric_mat @ eig_vecs
-    #     #components_vec = np.einsum('ji,ki->ijk', components_coords, eig_vecs) # shape (3, 11, 3)
-    #     self.components = np.zeros((rdim, n_points, dim, dim))
-    #     for i in range(rdim):
-    #         times = logs @ metric_mat @ eig_vecs[i]
-    #         component_sym_vec = np.einsum('i,j->ij', times, eig_vecs[i])
-    #         component_sym = np.stack([from_vec_to_sym(vec, dim) for vec in component_sym_vec])
-    #         component_vec = component_sym @ mean
-    #         projections = mean + component_vec
-    #         self.components[i] = project(projections)
-    #
-    #     vecs = np.stack([from_vec_to_sym(v, dim) for v in eig_vecs]) @ mean
-    #     self.vecs_spd = np.stack([tangent_project(vec, mean) for vec in vecs])
-    #     self.costs, self.variances = evaluate_results(self.components, points_spd, self.mean_spd)
-    #     return self
 
     def fit(self, points_spd):
         n_points, dim = points_spd.shape[:2]
@@ -152,34 +102,6 @@ class BuresWassersteinTPCA:
         self.vecs_spd = np.stack([tangent_project(mat, mean) for mat in mats])
         self.costs, self.variances = evaluate_results(self.components, points_spd, self.mean_spd)
         return self
-
-    # def fit(self, points_spd):
-    #     n_points, dim = points_spd.shape[:2]
-    #     _, self.mean_spd = bures_wasserstein_barycenter(np.zeros((n_points, 2)), points_spd)
-    #     mean = sqrtm(self.mean_spd)
-    #     points = align(points_spd, mean)
-    #
-    #     logs = (points - mean).reshape((n_points, dim ** 2))
-    #     test_center = norm(np.sum(logs, axis=0) / n_points)
-    #     if test_center > 1e-5:
-    #         print(f'Warning: the norm of the mean of the tangent vectors is {test_center}, not zero.')
-    #     covariance_of_logs = 1 / n_points * logs.T @ logs
-    #     _, eig_vecs = np.linalg.eigh(covariance_of_logs)
-    #
-    #     vecs = np.zeros((dim ** 2, dim, dim))
-    #     self.components = np.zeros((dim ** 2, n_points, dim, dim))
-    #     times = np.zeros((dim ** 2, n_points))
-    #     for i in range(dim ** 2):
-    #         vecs[i] = eig_vecs[:, -i-1].reshape((dim, dim))
-    #         print(norm(mean.T @ vecs[i] - vecs[i].T @ mean))
-    #         times[i] = np.stack([np.sum((pt - mean) * vecs[i]) for pt in points])
-    #         projections_on_line = np.stack([mean + t * vecs[i] for t in times[i]])
-    #         self.components[i] = project(projections_on_line)
-    #
-    #     #print(np.around(np.stack([vec.T @ mean - mean.T @ vec for vec in vecs]), 3))
-    #     self.vecs_spd = np.stack([tangent_project(vec, mean) for vec in vecs])
-    #     self.costs, self.variances = evaluate_results(self.components, points_spd, self.mean_spd)
-    #     return self
 
 
 class BuresWassersteinPGA:
@@ -387,24 +309,6 @@ class BuresWassersteinPGA2D:
             {'type': 'eq', 'fun': orthogonality_constraint},
             {'type': 'eq', 'fun': horizontality_constraint},
         ]
-        # a = mean_1.reshape(4)
-        # v = vec_1.reshape(4)
-        # cons = (
-        #     {'type': 'eq', 'fun': lambda x: np.sum(x[:4] ** 2) - 1},
-        #     {'type': 'eq', 'fun': lambda x: (
-        #             (v[0] * np.cos(x[-2]) + v[1] * np.sin(x[-2])) * x[0] +
-        #             (v[1] * np.cos(x[-2]) - v[0] * np.sin(x[-2])) * x[1] +
-        #             (v[2] * np.cos(x[-2]) + v[3] * np.sin(x[-2])) * x[2] +
-        #             (v[3] * np.cos(x[-2]) - v[2] * np.sin(x[-2])) * x[3]
-        #     )},
-        #     {'type': 'eq', 'fun': lambda x: (
-        #             x[0] * (- (a[0] + x[-1] * v[0]) * np.sin(x[-2]) + (a[1] + x[-1] * v[1]) * np.cos(x[-2])) +
-        #             x[2] * (- (a[2] + x[-1] * v[2]) * np.sin(x[-2]) + (a[3] + x[-1] * v[3]) * np.cos(x[-2])) -
-        #             x[1] * ((a[0] + x[-1] * v[0]) * np.cos(x[-2]) + (a[1] + x[-1] * v[1]) * np.sin(x[-2])) -
-        #             x[3] * ((a[2] + x[-1] * v[2]) * np.cos(x[-2]) + (a[3] + x[-1] * v[3]) * np.sin(x[-2]))
-        #     )}
-        # )
-
         x0 = np.hstack([self.vec[1].reshape(4), self.fiber_angle[0], self.time])
         h = scipy.optimize.minimize(func2min, x0=x0, constraints=cons)
         x_sol = h['x']
@@ -621,19 +525,6 @@ class BuresWassersteinPGAND:
             mean = x[dim ** 2:].reshape((dim, dim)).T
             return cost_func(self.points, mean, vec)
 
-        # def jac(x):
-        #     vec = x[:dim ** 2].reshape((dim, dim)).T
-        #     mean = x[dim ** 2:].reshape((dim, dim)).T
-        #     sq_norm = np.sum(vec ** 2)
-        #     aux_1 = np.stack([mean - pt + (sq_norm - 2) * np.sum((mean - pt) * vec) * vec for pt in self.points])
-        #     aux_2 = np.stack([
-        #         np.sum((mean - pt) * vec) ** 2 * vec + (sq_norm - 2) * np.sum((mean - pt) * vec) * (mean - pt)
-        #         for pt in self.points
-        #     ])
-        #     grad_mean = 2 * np.sum(aux_1, axis=0).T.reshape(dim ** 2)
-        #     grad_vec = 2 * np.sum(aux_2, axis=0).T.reshape(dim ** 2)
-        #     return np.stack((grad_vec, grad_mean))
-
         def horizontality_constraint(x):
             mean = x[dim ** 2:].reshape((dim, dim)).T
             mat_cons = []
@@ -768,63 +659,18 @@ class BuresWassersteinPGAND:
                 vecs_mean_n.append((self.vec[k] @ prod).T.reshape(self.dim ** 2))
             vecs_mean_n = np.stack(vecs_mean_n)
             return vecs_mean_n @ x
-        # def orthogonality_constraint(x, k):
-        #     prod = reduce(np.dot, [self.fiber_rotation[i] for i in range(k, n)])
-        #     vec_k_mean_1 = (self.vec[k] @ prod).T.reshape(self.dim ** 2)
-        #     return np.sum(x * vec_k_mean_1)
 
         cons = [
             {'type': 'eq', 'fun': lambda x: np.sum(x[:self.dim ** 2] ** 2) - 1},
             {'type': 'eq', 'fun': horizontality_constraint},
             {'type': 'eq', 'fun': orthogonality_constraints},
-        ] #+ [
-            #{'type': 'eq', 'fun': lambda x: orthogonality_constraint(x, k)} for k in range(n)
-        #]
+        ]
         x0 = self.vec[n].T.reshape(self.dim ** 2)
         h = scipy.optimize.minimize(func2min, x0=x0, constraints=cons)
         x_sol = h['x']
         if not h['success']:
             print('warning: failure in step 2-2 of component', n)
         self.vec[n] = x_sol.reshape((self.dim, self.dim)).T
-
-    # def component_3_step_2(self, rotation_3, vec_3, points, mean_2, vec_1, vec_2):
-    #     """ Step 2 of component 2: find optimal horizontal line.
-    #
-    #     The third geodesic component is parametrized by t -> mean_3 + t * vec_3, where
-    #     mean_3 = mean_2 @ rotation_3, and vec_3 is a unit horizontal vector at mean_3
-    #     and is orthogonal to vec_1 @ rotation_3 and to vec_2 @ rotation_3. It is found
-    #     by an alternate minimization of the cost function over rotation_3 (step 3-1) and
-    #     vec_3 (step 3-2).
-    #     """
-    #     mean_3 = mean_2 @ rotation_3
-    #     costs = [cost_func(points, mean_3, vec_3)]
-    #     for iteration in range(self.max_iter):
-    #         if self.super_verbose: print(f'iteration {iteration} of step 2')
-    #         rotation_3 = self.component_3_step_2_1(rotation_3, vec_3, points, mean_2, vec_1, vec_2)
-    #
-    #         vec_3 = self.component_2_step_2_2(rotation_2, rotation_2, time_2, vec_2, points, mean_1, vec_1)
-    #         mean_2 = (mean_1 + time_2 * vec_1) @ rotation_2
-    #         costs.append(cost_func(points, mean_2, vec_2))
-    #         if self.super_verbose: print('step 2-2, cost is ', costs[-1])
-    #
-    #         if np.abs((costs[-1] - costs[-2]) / costs[-2]) < self.tol or np.abs(costs[-1] - costs[-2]) < self.tol:
-    #             if self.verbose: print(f'Step 2: convergence reached in {iteration + 1} iterations.')
-    #             break
-    #
-    #     if iteration == self.max_iter - 1:
-    #         print('Step 2: Warning! max number of iterations reached for step 2 of component 2.')
-    #     return rotation_2, time_2, vec_2
-
-    # def evaluate_results(self, components, points_spd, mean_spd):
-    #     costs = [
-    #         np.sum(self.space.metric.dist(points_spd, components[0]) ** 2),
-    #         np.sum(self.space.metric.dist(points_spd, components[1]) ** 2),
-    #     ]
-    #     variances = [
-    #         np.sum(self.space.metric.dist(components[0], mean_spd) ** 2),
-    #         np.sum(self.space.metric.dist(components[1], mean_spd) ** 2),
-    #     ]
-    #     return costs, variances
 
     def fit(self, points_spd):
         """ Perform Bures-Wasserstein Principal Geodesic Analysis on SPD matrices.
