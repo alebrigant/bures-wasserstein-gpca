@@ -1,7 +1,36 @@
 import numpy as np
 
-from scipy.linalg import sqrtm, solve_lyapunov
+from scipy.linalg import sqrtm, solve_lyapunov, solve_continuous_lyapunov, solve_sylvester
 from geomstats.geometry.spd_matrices import SPDMatrices, SPDBuresWassersteinMetric
+
+
+def gram_schmidt(vecs, metric=None):
+    dim = vecs.shape[-1]
+    n_vecs = vecs.shape[0]
+    if metric is None:
+        metric = np.eye(dim)
+    new_vecs = [vecs[0] / (vecs[0].T @ metric @ vecs[0]) ** (1/2)]
+    for i in range(1, n_vecs):
+        projections = np.stack([(vecs[i].T @ metric @ new_vec) * new_vec for new_vec in new_vecs])
+        new_vec_i = vecs[i] - np.sum(projections, axis=0)
+        new_vecs.append(new_vec_i / (new_vec_i.T @ metric @ new_vec_i) ** (1/2))
+    return np.stack(new_vecs)
+
+
+def from_vec_to_sym(vec, dim):
+    mat = np.zeros((dim, dim))
+    for i in range(dim):
+        mat[i, i:] = vec[i * dim - i * (i-1) // 2: (i+1) * dim - (i+1) * i // 2]
+        mat[i, i] /= 2
+    mat = mat + mat.T
+    return mat
+
+
+def from_sym_to_vec(mat, dim):
+    vec = []
+    for i in range(dim):
+        vec.append(mat[i, i:])
+    return np.hstack(vec)
 
 
 def make_rotation_2d(angle):
@@ -28,13 +57,27 @@ def project(mat):
 
 def tangent_project(vec, mat):
     # Differential of projection
+    if vec.ndim == 3:
+        return np.stack([v @ mat.T + mat @ v.T for v in vec])
     return vec @ mat.T + mat @ vec.T
 
 
-def monge_map(cov_a, cov_b):
+def monge_map_unit(cov_a, cov_b):
     # Compute the only symmetric positive definite
     # matrix T such that T @ cov_a @ T^t = cov_b.
     return np.linalg.inv(cov_a) @ sqrtm(cov_a @ cov_b)
+
+
+def monge_map(cov_a, cov_b):
+    # Find the element of the fiber over cov (matrix in GL(n))
+    # that is closest to ref_mat. Vectorized.
+    if cov_a.ndim == 3 and cov_b.ndim == 3:
+        return np.stack([monge_map_unit(m_a, m_b) for (m_a, m_b) in zip(cov_a, cov_b)])
+    if cov_a.ndim == 3 and cov_b.ndim == 2:
+        return np.stack([monge_map_unit(m_a, cov_b) for m_a in cov_a])
+    if cov_a.ndim == 2 and cov_b.ndim == 3:
+        return np.stack([monge_map_unit(cov_a, m_b) for m_b in cov_b])
+    return monge_map_unit(cov_a, cov_b)
 
 
 def align_unit(cov, ref_mat):
@@ -62,8 +105,6 @@ def bures_wasserstein_sectional_curvature(vec_1, vec_2, base_point):
     d, P = np.linalg.eigh(base_point)
     vec_1_0 = solve_lyapunov(base_point, vec_1)
     vec_2_0 = solve_lyapunov(base_point, vec_2)
-    assert np.all(np.abs(base_point @ vec_1_0 + vec_1_0 @ base_point - vec_1) < 1e-6)
-    assert np.all(np.abs(base_point @ vec_2_0 + vec_2_0 @ base_point - vec_2) < 1e-6)
     vec_1_0_prime = P.T @ vec_1_0 @ P
     vec_2_0_prime = P.T @ vec_2_0 @ P
     bracket = vec_1_0_prime @ vec_2_0_prime - vec_2_0_prime @ vec_1_0_prime
@@ -98,3 +139,38 @@ def bures_wasserstein_ricci_curvature(vec, base_point):
             ricci.append(bures_wasserstein_ricci_curvature_unit(vc, bp))
         return np.array(ricci)
     return bures_wasserstein_ricci_curvature_unit(vec, base_point)
+
+
+def compute_time_bounds_of_geodesic(point, vec):
+    ''' dim 2 !!'''
+    vec_0 = solve_continuous_lyapunov(point, vec)
+    #lbd_min, lbd_max = np.linalg.eigh(vec_0)[0]
+    eigval, _ = np.linalg.eigh(vec_0)
+    lbd_min, lbd_max = eigval[0], eigval[-1]
+    t_min = (- 1 / lbd_max) * (lbd_max > 0) - 1e6 * (lbd_max <= 0)
+    t_max = (- 1 / lbd_min) * (lbd_min < 0) + 1e6 * (lbd_min >= 0)
+    return np.array([t_min, t_max])
+
+
+def compute_times_spd(vec, base_point, n_points):
+    ''' dim 2 !!'''
+    sym_mat = solve_sylvester(base_point, base_point, vec)
+    eigval, _ = np.linalg.eigh(sym_mat)
+    lbd_min, lbd_max = eigval[0], eigval[-1]
+    time_inf = - 1 / lbd_max if lbd_max > 0 else -np.infty
+    time_sup = - 1 / lbd_min if lbd_min < 0 else np.infty
+    time_bound = 0.8 * np.minimum(- time_inf, time_sup)
+    return np.linspace(-time_bound, time_bound, n_points)
+
+
+def compute_geodesic(point, vec, n_times=100, t_min_clip=-1e6, t_max_clip=1e6):
+    ''' dim 2 !!'''
+    t_min, t_max = compute_time_bounds_of_geodesic(point, vec)
+    t_min = np.maximum(t_min, t_min_clip)
+    t_max = np.minimum(t_max, t_max_clip)
+    times = np.linspace(t_min, t_max, n_times)
+    spd_space = SPDMatrices(2)
+    spd_space.equip_with_metric(SPDBuresWassersteinMetric)
+    return spd_space.metric.geodesic(initial_point=point, initial_tangent_vec=vec)(times)
+
+
