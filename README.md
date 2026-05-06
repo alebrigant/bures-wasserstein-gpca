@@ -1,6 +1,6 @@
 # Bures Wasserstein GPCA
 
-This repository implements Geodesic Principal Component Analysis (GPCA) in the space of SPD matrices for the Bures-Wasserstein metric, as introduced in [1]. Tangent Princical Component Analysis (TPCA) is also implemented for comparison. The examples reproduce the experiments of the paper. 
+This repository implements Geodesic Principal Component Analysis (GPCA) in the space of SPD matrices for the Bures-Wasserstein metric, as introduced in [1]. Tangent Princical Component Analysis (TPCA) is also implemented for comparison. The experiments of the paper can be found in the examples.
 
 ## Requirements
 
