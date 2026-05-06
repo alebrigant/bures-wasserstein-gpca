@@ -30,7 +30,7 @@ def plot_spd_matrices(points_spd, figsize=(3, 3)):
     plt.show()
 
 
-def plot_results(points_spd, res, title='', fontsize=8):
+def plot_pca_results_with_ellipses(points_spd, pca, title='', fontsize=8, alpha=0.2):
     n_points = points_spd.shape[0]
     map = matplotlib.colormaps['cool'].resampled(n_points)
     font = {'size': fontsize}
@@ -41,118 +41,51 @@ def plot_results(points_spd, res, title='', fontsize=8):
     for i in range(n_points):
         plot_spd_matrix(points_spd[i], color=map(i))
     plt.axis('equal')
-    plt.title('initial points')
-
-    fig.add_subplot(142)
-    for i in range(int(n_points)):
-        plot_spd_matrix(points_spd[i], color=map(i))
-    for mat in res['components'][0]:
-        plot_spd_matrix(mat, color='k', linestyle='dotted')
-    plt.axis('equal')
-    plt.title('projections on 1st component')
-
-    fig.add_subplot(143)
-    for i in range(int(n_points)):
-        plot_spd_matrix(points_spd[i], color=map(i))
-    for mat in res['components'][1]:
-        plot_spd_matrix(mat, color='k', linestyle='dotted')
-    plt.axis('equal')
-    plt.title('projections on 2nd component')
-
-    fig.add_subplot(144)
-    for i in range(int(n_points)):
-        plot_spd_matrix(points_spd[i], color=map(i))
-    for mat in res['components'][2]:
-        plot_spd_matrix(mat, color='k', linestyle='dotted')
-    plt.axis('equal')
-    plt.title('projections on 3rd component')
-    fig.suptitle(title)
-    plt.show()
-
-
-def plot_results_1(points_spd, res, title='', fontsize=8, alpha=0.2):
-    n_points = points_spd.shape[0]
-    map = matplotlib.colormaps['cool'].resampled(n_points)
-    font = {'size': fontsize}
-    matplotlib.rc('font', **font)
-
-    fig = plt.figure(figsize=(12, 3))
-    fig.add_subplot(141)
-    for i in range(n_points):
-        plot_spd_matrix(points_spd[i], color=map(i))
-    plt.axis('equal')
-    #plt.title('initial points')
+    plt.title('Initial points')
 
     fig.add_subplot(142)
     for i in range(n_points):
         plot_spd_matrix(points_spd[i], color='grey', alpha=alpha)
     for i in range(int(n_points)):
-        #plot_spd_matrix(res['components'][0, i], color=map(i))
-        plot_spd_matrix(res.components[0, i], color=map(i))
+        plot_spd_matrix(pca.components[0, i], color=map(i))
     plt.axis('equal')
-    #plt.title('projections on 1st component')
+    plt.title('Projections on 1st component')
 
     fig.add_subplot(143)
     for i in range(n_points):
         plot_spd_matrix(points_spd[i], color='grey', alpha=alpha)
     for i in range(int(n_points)):
-        #plot_spd_matrix(res['components'][1, i], color=map(i))
-        plot_spd_matrix(res.components[1, i], color=map(i))
+        plot_spd_matrix(pca.components[1, i], color=map(i))
     plt.axis('equal')
-    #plt.title('projections on 2nd component')
+    plt.title('Projections on 2nd component')
 
     fig.add_subplot(144)
     for i in range(n_points):
         plot_spd_matrix(points_spd[i], color='grey', alpha=alpha)
     for i in range(int(n_points)):
-        plot_spd_matrix(res.components[2, i], color=map(i))
-        #plot_spd_matrix(res['components'][2, i], color=map(i))
+        plot_spd_matrix(pca.components[2, i], color=map(i))
     plt.axis('equal')
-    #plt.title('projections on 3rd component')
+    plt.title('Projections on 3rd component')
     fig.suptitle(title)
     plt.show()
 
 
-def plot_results_compare(points_spd, res_pga, res_tpca):
-    n_points = points_spd.shape[0]
-    n_half = int(n_points / 2)
-
-    fig = plt.figure(figsize=(8, 8))
-    fig.add_subplot(221)
-    for i in range(n_half):
-        plot_spd_matrix(points_spd[i], color='b')
-        plot_spd_matrix(points_spd[n_half + i], color='m')
-    for mat in res_pga['component_1']:
-        plot_spd_matrix(mat, color='k', linestyle='dotted')
-    plt.title('PGA 1st component')
-
-    fig.add_subplot(222)
-    for i in range(n_half):
-        plot_spd_matrix(points_spd[i], color='b')
-        plot_spd_matrix(points_spd[n_half + i], color='m')
-    for mat in res_pga['component_2']:
-        plot_spd_matrix(mat, color='k', linestyle='dotted')
-    plt.title('PGA 2nd component')
-
-    fig.add_subplot(223)
-    for i in range(n_half):
-        plot_spd_matrix(points_spd[i], color='b')
-        plot_spd_matrix(points_spd[n_half + i], color='m')
-    for mat in res_tpca['component_1']:
-        plot_spd_matrix(mat, color='k', linestyle='dotted')
-    plt.title('TPCA 1st component')
-
-    fig.add_subplot(224)
-    for i in range(n_half):
-        plot_spd_matrix(points_spd[i], color='b')
-        plot_spd_matrix(points_spd[n_half + i], color='m')
-    for mat in res_tpca['component_2']:
-        plot_spd_matrix(mat, color='k', linestyle='dotted')
-    plt.title('TPCA 2nd component')
+def plot_pca_results_with_ellipses_on_grid(points_spd, pca, n, n_transl=26):
+    dim = pca.points_spd.shape[1]
+    x = np.linspace(0., n_transl, n)
+    xx = np.meshgrid(x, x)
+    positions = np.stack(xx).T.reshape((n ** 2, dim))
+    positions_comp1 = np.tile(np.stack((x, n_transl // 2 * np.ones(n))).T, (1,n)).reshape((n**2, 2))
+    positions_comp2 = np.tile(np.stack((n_transl // 2 * np.ones(n), x)).T, (n,1))
+    for i in range(n ** 2):
+        plot_spd_matrix_translated(points_spd[i], positions[i], color='k')
+        plot_spd_matrix_translated(pca.components[0, i], positions_comp1[i], color='r')
+        plot_spd_matrix_translated(pca.components[1, i], positions_comp2[i], color='b')
+    plt.axis('off')
     plt.show()
 
 
-def eig_angle_to_cone_coordinates(eig, angle):
+def spectral_to_cone_coordinates(eig, angle):
     lbd, mu = eig
     a = (lbd + mu) / 2
     b = (lbd - mu) / 2 * (np.cos(angle) ** 2 - np.sin(angle) ** 2)
@@ -163,31 +96,68 @@ def eig_angle_to_cone_coordinates(eig, angle):
 def mat_to_cone_coordinates(sym_mat):
     eig, eigenvec = np.linalg.eigh(sym_mat)
     angle = np.arctan(- eigenvec[0, 1] / eigenvec[1, 1])
-    return eig_angle_to_cone_coordinates(eig, angle)
+    return spectral_to_cone_coordinates(eig, angle)
 
 
-def plot_results_on_cone(points_spd, res, bound=5., t_clip=2.):
-    geod1 = compute_geodesic(res['mean_spd'], res['vecs_spd'][0], t_min_clip=-t_clip, t_max_clip=t_clip)
-    geod2 = compute_geodesic(res['mean_spd'], res['vecs_spd'][1], t_min_clip=-t_clip, t_max_clip=t_clip)
-    geod3 = compute_geodesic(res['mean_spd'], res['vecs_spd'][2], t_min_clip=-t_clip, t_max_clip=t_clip)
-    coords_comp1 = np.stack([mat_to_cone_coordinates(mat) for mat in res['components'][0]])
-    coords_comp2 = np.stack([mat_to_cone_coordinates(mat) for mat in res['components'][1]])
-    coords_comp3 = np.stack([mat_to_cone_coordinates(mat) for mat in res['components'][2]])
-    coords_geod1 = np.stack([mat_to_cone_coordinates(mat) for mat in geod1])
-    coords_geod2 = np.stack([mat_to_cone_coordinates(mat) for mat in geod2])
-    coords_geod3 = np.stack([mat_to_cone_coordinates(mat) for mat in geod3])
-    coords_spd = np.stack([mat_to_cone_coordinates(mat) for mat in points_spd])
+def cone_coordinates_of_component(res, n_comp, eps=0.2):
+    tmin = np.min(res.times[n_comp]) - eps
+    tmax = np.max(res.times[n_comp]) + eps
+    component_spd = compute_geodesic(res.mean_spd, res.vecs_spd[n_comp], t_min_clip=tmin, t_max_clip=tmax)
+    component_cone = np.stack([mat_to_cone_coordinates(mat) for mat in component_spd])
+    return component_cone
+
+
+def plot_pca_results_in_cone(points_spd, res, bound=5., eps=0.2, elev=30, azim=45):
+    colors = ['red', 'blue', 'green']
+    x = np.linspace(-bound, bound, 100)
+    xx, yy = np.meshgrid(x, x)
+    zz = np.sqrt(xx ** 2 + yy ** 2)
+    fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+    ax.plot_surface(xx, yy, zz, cmap=cm.coolwarm, alpha=0.5)
+    points_cone = np.stack([mat_to_cone_coordinates(mat) for mat in points_spd])
+    ax.scatter(points_cone[:, 1], points_cone[:, 2], points_cone[:, 0], color='k', s=40)
+    for i in range(3):
+        component_cone = cone_coordinates_of_component(res, i, eps)
+        ax.plot(component_cone [:, 1], component_cone [:, 2], component_cone [:, 0], color=colors[i], linewidth=2)
+    ax.view_init(elev=elev, azim=azim)
+    plt.show()
+
+
+def compare_pca_components_in_cone(n_comp, points_spd, res_gpca, res_tpca, bound=5., eps=0.2):
+    gpca_component = cone_coordinates_of_component(res_gpca, n_comp, eps)
+    tpca_component = cone_coordinates_of_component(res_tpca, n_comp, eps)
+    points = np.stack([mat_to_cone_coordinates(mat) for mat in points_spd])
+    tpca_mean = mat_to_cone_coordinates(res_tpca.mean_spd)
 
     x = np.linspace(-bound, bound, 100)
     xx, yy = np.meshgrid(x, x)
     zz = np.sqrt(xx ** 2 + yy ** 2)
     fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
     ax.plot_surface(xx, yy, zz, cmap=cm.coolwarm, alpha=0.5)
-    ax.scatter(coords_spd[:, 1], coords_spd[:, 2], coords_spd[:, 0], color='black', s=40)
-    #ax.scatter(coords_comp1[:, 1], coords_comp1[:, 2], coords_comp1[:, 0], color='red')
-    #ax.scatter(coords_comp2[:, 1], coords_comp2[:, 2], coords_comp2[:, 0], color='blue')
-    #ax.scatter(coords_comp3[:, 1], coords_comp3[:, 2], coords_comp3[:, 0], color='green')
-    ax.plot(coords_geod1[:, 1], coords_geod1[:, 2], coords_geod1[:, 0], color='red', linewidth=2)
-    ax.plot(coords_geod2[:, 1], coords_geod2[:, 2], coords_geod2[:, 0], color='blue', linewidth=2)
-    ax.plot(coords_geod3[:, 1], coords_geod3[:, 2], coords_geod3[:, 0], color='green', linewidth=2)
+    ax.scatter(points[:, 1], points[:, 2], points[:, 0], color='black', s=40)
+    ax.scatter(tpca_mean[1], tpca_mean[2], tpca_mean[0], color='magenta')
+    ax.plot(gpca_component[:, 1], gpca_component[:, 2], gpca_component[:, 0], color='red', linewidth=2)
+    ax.plot(tpca_component[:, 1], tpca_component[:, 2], tpca_component[:, 0], '--', color='red', linewidth=2)
+    #ax.set_xticks([-0.5, 0, 0.5])
+    #ax.set_yticks([-0.5, 0, 0.5])
+    #ax.set_zticks([0, 0.5])
+    plt.show()
+
+
+def compare_first_pca_components_in_section_of_cone(points_spd, res_gpca, res_tpca, eps=0.2):
+    font = {'size': 16}
+    matplotlib.rc('font', **font)
+    n_comp = 0
+    gpca_component = cone_coordinates_of_component(res_gpca, n_comp, eps)
+    tpca_component = cone_coordinates_of_component(res_tpca, n_comp, eps)
+    points = np.stack([mat_to_cone_coordinates(mat) for mat in points_spd])
+    tpca_mean = mat_to_cone_coordinates(res_tpca.mean_spd)
+
+    plt.figure()
+    plt.scatter(points[:, 1], points[:, 2], color='black')
+    plt.plot(gpca_component[:, 1], gpca_component[:, 2], '-', color='red', linewidth=3)
+    plt.plot(tpca_component[:, 1], tpca_component[:, 2], '--', color='red', linewidth=3)
+    plt.scatter(tpca_mean[1], tpca_mean[2], color='magenta', s=100)
+    plt.axis('equal')
+    plt.axis('off')
     plt.show()
