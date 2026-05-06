@@ -34,7 +34,7 @@ def test_clip_times(dim=3, tol=1e-5):
 
 def test__bures_wasserstein_gpca__general(dim=2, tol=1e-5, seed=1):
     np.random.seed(seed)
-    points_spd = generate_spd_matrices_on_intersecting_geodesics(dim, eps=0.2)[0]
+    points_spd = generate_spd_matrices_on_intersecting_geodesics(dim, eps=0.2)
     res = BuresWassersteinGPCA(dim=dim).fit(points_spd)
     spd_space = SPDMatrices(dim)
     spd_space.equip_with_metric(SPDBuresWassersteinMetric)
@@ -57,7 +57,7 @@ def test__bures_wasserstein_gpca__general(dim=2, tol=1e-5, seed=1):
 def test__bures_wasserstein_gpca__dim2(tol=1e-3, seed=123):
     """Check that implementations in dimension 2 and higher are consistent."""
     np.random.seed(seed)
-    points_spd = generate_spd_matrices_on_intersecting_geodesics(dim=2)[0]
+    points_spd = generate_spd_matrices_on_intersecting_geodesics(dim=2)
     res_2d = BuresWassersteinGPCA(dim=2).fit(points_spd)
     res_nd = BuresWassersteinGPCAND(dim=2).fit(points_spd)
     result = res_nd.costs
@@ -92,7 +92,7 @@ def test__bures_wasserstein_gpca__orthogonal_geodesics(dim=2, n_points=11, n_geo
 
 def test__bures_wasserstein_tpca__general(dim=2, tol=1e-6, seed=1):
     np.random.seed(seed)
-    points_spd = generate_spd_matrices_on_intersecting_geodesics(dim, eps=0.2)[0]
+    points_spd = generate_spd_matrices_on_intersecting_geodesics(dim, eps=0.2)
     res = BuresWassersteinTPCA().fit(points_spd)
     spd_space = SPDMatrices(dim)
     spd_space.equip_with_metric(SPDBuresWassersteinMetric)
