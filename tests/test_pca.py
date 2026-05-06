@@ -1,4 +1,5 @@
-from pca.bures_wasserstein_principal_geodesic_analysis import *
+from pca.bures_wasserstein_geodesic_pca import *
+from pca.bures_wasserstein_tangent_pca import *
 from tools.generate import *
 
 
@@ -31,10 +32,10 @@ def test_clip_times(dim=3, tol=1e-5):
     assert np.all(np.abs(result - expected) < tol)
 
 
-def test__bures_wasserstein_pga__general(dim=2, tol=1e-5, seed=1):
+def test__bures_wasserstein_gpca__general(dim=2, tol=1e-5, seed=1):
     np.random.seed(seed)
     points_spd = generate_spd_matrices_on_intersecting_geodesics(dim, eps=0.2)[0]
-    res = BuresWassersteinPGA(dim=dim).fit(points_spd)
+    res = BuresWassersteinGPCA(dim=dim).fit(points_spd)
     spd_space = SPDMatrices(dim)
     spd_space.equip_with_metric(SPDBuresWassersteinMetric)
     rdim = dim * (dim + 1) // 2
@@ -53,21 +54,21 @@ def test__bures_wasserstein_pga__general(dim=2, tol=1e-5, seed=1):
         check_horizontality(res.vec[i], res.mean[i])
 
 
-def test__bures_wasserstein_pga__dim2(tol=1e-3, seed=1):
+def test__bures_wasserstein_gpca__dim2(tol=1e-3, seed=123):
     """Check that implementations in dimension 2 and higher are consistent."""
     np.random.seed(seed)
     points_spd = generate_spd_matrices_on_intersecting_geodesics(dim=2)[0]
-    res_2d = BuresWassersteinPGA(dim=2).fit(points_spd)
-    res_nd = BuresWassersteinPGAND(dim=2).fit(points_spd)
+    res_2d = BuresWassersteinGPCA(dim=2).fit(points_spd)
+    res_nd = BuresWassersteinGPCAND(dim=2).fit(points_spd)
     result = res_nd.costs
     expected = res_2d.costs
     assert np.all(np.abs((result - expected) / expected) < tol)
 
 
-def test__bures_wasserstein_pga__orthogonal_geodesics(dim=2, n_points=11, n_geod=3, tol=1e-2, seed=1):
+def test__bures_wasserstein_gpca__orthogonal_geodesics(dim=2, n_points=11, n_geod=3, tol=1e-2, seed=1):
     """Check that multiple orthogonal geodesics project to themselves."""
     points_spd, mean_spd = generate_spd_matrices_on_orthogonal_geodesics(dim, n_points, n_geod, seed)
-    pga = BuresWassersteinPGA(dim).fit(points_spd)
+    pga = BuresWassersteinGPCA(dim).fit(points_spd)
 
     indices = np.arange(n_geod * n_points)
     masks = [(indices < n_points)]
@@ -134,13 +135,13 @@ def test__bures_wasserstein_tpca__orthogonal_geodesics(dim=2, n_points=11, n_geo
 
 
 test_clip_times(dim=3)
-test__bures_wasserstein_pga__general(dim=2)
-test__bures_wasserstein_pga__general(dim=3)
-test__bures_wasserstein_pga__dim2()
-test__bures_wasserstein_pga__orthogonal_geodesics(dim=2, n_geod=1)
-test__bures_wasserstein_pga__orthogonal_geodesics(dim=2, n_geod=2)
-test__bures_wasserstein_pga__orthogonal_geodesics(dim=2, n_geod=3)
-test__bures_wasserstein_pga__orthogonal_geodesics(dim=3, tol=0.05)
+test__bures_wasserstein_gpca__general(dim=2)
+test__bures_wasserstein_gpca__general(dim=3)
+test__bures_wasserstein_gpca__dim2()
+test__bures_wasserstein_gpca__orthogonal_geodesics(dim=2, n_geod=1)
+test__bures_wasserstein_gpca__orthogonal_geodesics(dim=2, n_geod=2)
+test__bures_wasserstein_gpca__orthogonal_geodesics(dim=2, n_geod=3)
+test__bures_wasserstein_gpca__orthogonal_geodesics(dim=3, tol=0.05)
 
 test__bures_wasserstein_tpca__general(dim=2)
 test__bures_wasserstein_tpca__general(dim=3)
