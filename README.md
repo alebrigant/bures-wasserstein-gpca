@@ -1,3 +1,3 @@
-# Bures Wasserstein PGA
+# Bures Wasserstein GPCA
 
-Principal Geodesic Analysis in the space of SPD matrices for the Bures-Wasserstein metric.
+Geodesic Principal Component Analysis in the space of SPD matrices for the Bures-Wasserstein metric.
